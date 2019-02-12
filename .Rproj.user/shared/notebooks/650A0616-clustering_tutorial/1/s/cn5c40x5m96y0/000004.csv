@@ -1,0 +1,4 @@
+"0","rna_base<-dcast(relAbun[c(1,19,18)], Sample~OTU.ID, fill=0)
+"
+"2","Using RNA_relabun as value column: use value.var to override.
+"

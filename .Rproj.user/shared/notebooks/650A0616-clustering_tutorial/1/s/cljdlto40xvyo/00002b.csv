@@ -1,0 +1,25 @@
+"0","plot_ly(pcoa_rna_frame,x=~Comp.1,y=~Comp.2,z=~Comp.3,color=~time_of_day)%>%
+  layout(title='PCoA of 18S RNA Diel Data',
+         scene=list(xaxis=list(title=paste0('PC1 ',eigenvalues[1],'%'),
+                    scale=pcoa_rna$sdev[1]),
+         yaxis=list(title=paste0('PC2 ',eigenvalues[2],'%'),
+                    scale=pcoa_rna$sdev[2]),
+         zaxis=list(title=paste0('PC3 ',eigenvalues[3],'%'),
+                    scale=pcoa_rna$sdev[3])))
+"
+"2","No trace type specified:
+  Based on info supplied, a 'scatter3d' trace seems appropriate.
+  Read more about this trace type -> https://plot.ly/r/reference/#scatter3d
+"
+"2","No scatter3d mode specifed:
+  Setting the mode to markers
+  Read more about this attribute -> https://plot.ly/r/reference/#scatter-mode
+"
+"2","No trace type specified:
+  Based on info supplied, a 'scatter3d' trace seems appropriate.
+  Read more about this trace type -> https://plot.ly/r/reference/#scatter3d
+"
+"2","No scatter3d mode specifed:
+  Setting the mode to markers
+  Read more about this attribute -> https://plot.ly/r/reference/#scatter-mode
+"

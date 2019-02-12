@@ -1,0 +1,242 @@
+---
+title: 'Tutorial 3.1: Clustering Time Series'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Clustering Time Series: Loading and Normalizing Data (with some theory!)
+\t An early objective of the analysis of microbiome time-series may be to find whether microbiomes are similar between different time points or whether particular members of the community tend to co-occur (have similar temporal dynamics). While the interpretations of these analyses have some important caveats which are discussed in the main text, this tutorial will serve as an interactive guide for how to perform exploratory statistical analyses comparing whole microbiomes from different times, as well as how to cluster sequence units by their temporal dynamics.
+\t The first step will be to load and inspect the data, after which some common misconceptions about ordination techniques (PCA, PCoA, CCA, NMDS) will be discussed and the techniques will be implemented. Following this analysis, sequence units will be clustered based on their temporal behavior via several clustering methods (hierarchical, k-means, self-organizing maps), and clustering assessment/validation techniques will be introduced.
+\t First things first, let's load all the libraries that we'll need and the 2015 ALOHA Legacy II HOE Cruise diel 18S rna and dna data, which have already been mapped and clustered.
+
+```{r Loading and pre-treating data}
+## Loading libraries
+library(reshape2)
+library(vegan)
+library(tidyverse)
+library(plotly)
+library(ade4)
+
+## Loading data
+# Import diel data
+setwd("~/repos/times_series_methods_scripts/")
+load("diel_df_Robj.RData",verbose=F) # load diel dataset
+# In this dataset, we have OTU ids as well as taxonomies for 3831 OTUs as well as their quantified 18S RNA and DNA levels. To account for variation in sequencing depth, we can convert to relative abundances. Other options include estimating counts from methods such as dada2 [cite]. 
+
+# First removing OTUs with ambiguous taxonomies:
+ambig<-c("Opisthokont-Fungi","Opisthokont-Metazoa","Opisthokonts-Other","Other/unknown","Unassigned")
+tmp<-diel_data[-(which(diel_data$Taxa %in% ambig)),]
+# Calculate relative abundances based on per-timepoint read count totals
+relAbun<-tmp %>% 
+  group_by(Num) %>% 
+  mutate(DNA_relabun=DNA/sum(DNA), RNA_relabun=RNA/sum(RNA)) 
+names(relAbun) # output
+# Reformat data frame to wide format for analytical applications
+samplenum<-as.character(c(1:19))
+new_samplename<-c("1_6PM","2_10PM","3_2AM","4_6AM","5_10AM","6_2PM","7_6PM","8_10PM","9_2AM","10_6AM","11_10AM","12_2PM","13_6PM","14_10PM","15_2AM","16_6AM","17_10AM","18_2PM","19_6PM")
+relAbun$Sample<-factor(relAbun$Num, levels = samplenum, labels = new_samplename)
+names(relAbun)
+dna_base<-dcast(relAbun[c(1,19,17)], Sample~OTU.ID, fill=0)
+rna_base<-dcast(relAbun[c(1,19,18)], Sample~OTU.ID, fill=0)
+rna_counts<-dcast(relAbun[c(1,19,15)],Sample~OTU.ID,fill=0)
+# Now remove all 0 rows and remove metadata from data matrices so we can apply ordination methods
+# Shifting sample metadata from a column to row names
+row.names(dna_base)<-dna_base$Sample; dna_base$Sample<-NULL
+row.names(rna_base)<-rna_base$Sample; rna_base$Sample<-NULL
+row.names(rna_counts)<-rna_counts$Sample; rna_counts$Sample<-NULL
+# Removing 0 rows and checking rows sum to 1 (rows are timepoints)
+rowsum_dna<-apply(dna_base,1,sum);rowsum_dna
+rowsum_rna<-apply(rna_base,1,sum);rowsum_rna
+
+```
+## Picking the Right Ordination Method for You
+$\qquad$ There are many statistical methods for organizing high dimensional data into less high dimensional data that retains as much of the original information as possible while being much easier to grasp conceptually. Many methods common to microbiome studies rely on the Singular Value Decomposition of the Covariance Matrix of your samples, using the relative abundances of different community members as data. These methods include PCA, CCA, and PCoA; and although each has their own unique attributes, the principle behind their calculation is the same. [this definitely has already been written up somewhere so we can cite it]. 
+$\qquad$ To explain these methods, let's quickly define both singular value decomposition and covariance matrices. A covariance matrix is the matrix which contains the variances in each variable of a multivariate dataset on the diagonals, and their pairwise covariances on the off diagonals. For instance, if you measured two variables each on three separate observations, the covariance matrix would be 2x2 and have the variances of each of the two variables on the diagonal and the covariance between variable 1 and variable 2 on the off-diagonals. These matrices are symmetrical because the covariance between variable 1 and variable 2 is the same as the covariance between variable 2 and variable 1, which is a helpful trick for later. In microbiome data, we usually consider the abundance of each OTU to be a variable and each sample to be a different observation, so calculating all pairwise covariances manually would be a big pain. Instead, we use the definition that a covariance matrix $\Sigma$ for data matrix $X_{ij}$, where $i$ is the number of observations and $j$ is the number of variables, is $\Sigma=X_{ij}'X_{ij}$. The goal of PCA is to reframe $\Sigma$ as a matrix with the same matrix properties, but where all off-diagonals are 0 (meaning each row/column is uncorrelated to any other row/column). These new rows become the axes of your PCA, and the order in which we view them is based on the magnitude of the new value that takes the diagonal, or the eigenvalue associated with that new axis. This is performed by 
+
+```{r Implementing SVD-based Ordination}
+# First thing -- data exist on a simplex so covariance matrix is singular:
+# Evidence:
+cov_determinant<-det(as.matrix(rna_base)%*%t(rna_base))
+cov_determinant #Close to 0 w/in numerical error 
+# Next thing, cca w/out constraining variable is just PCA so it is more clear and precise to call it that
+# But before we do it we need to get the data out of the simplex. Recommendation is log ratios or
+# estimating read counts using a package like dada2.
+# Alternatively, you can do a PCoA using your favorite distance metric. For example, Jaccard
+rna_dmat<-vegdist(rna_base,method="jaccard")
+pcoa_rna<-princomp(rna_dmat)
+# Then you'd need to look at the skree plot to determine appropriate # axes.
+# Skree plots show you the amount of variance explained associated with each principal axis
+# Because the goal of a PCA is to display the samples in a way that conveys how the covary
+# with the most fidelity, having 2 axes that explain similar amounts of covariance and only
+# showing one is antithetical to the goal of the procedure. Therefore, always check and display
+# the entire eigenvalue distribution for any PCA/PCoA/CCA
+plot(pcoa_rna)
+# This looks like most of the variance is explained by one axis, but the following 2 have similar
+# amounts of variance explained, so you'd need to go for 3 axes.
+# Also, because the magnitudes of the axes contain information, scaling must be held constant
+pcoa_rna_frame<-data.frame(pcoa_rna$scores,
+                           time_of_day=gsub('^.*_','',rownames(pcoa_rna$scores)))
+eigenvalues<-round(pcoa_rna$sdev,4)*100
+scatterplot3d::scatterplot3d(pcoa_rna$scores[,1:3])
+plot_ly(pcoa_rna_frame,x=~Comp.1,y=~Comp.2,z=~Comp.3,color=~time_of_day)%>%
+  layout(title='PCoA of 18S RNA Diel Data',
+         scene=list(xaxis=list(title=paste0('PC1 ',eigenvalues[1],'%'),
+                    scale=pcoa_rna$sdev[1]),
+         yaxis=list(title=paste0('PC2 ',eigenvalues[2],'%'),
+                    scale=pcoa_rna$sdev[2]),
+         zaxis=list(title=paste0('PC3 ',eigenvalues[3],'%'),
+                    scale=pcoa_rna$sdev[3])))
+# There is a pretty clear hidden axis here, which seems to suggest some information is excluded from the
+# distance matrix provided: recommendation is to use Unifrac distance w/trees of relatedness to capture
+# missing phylogenetic information.
+# Alternatively, you can use pca/cca if you convert to log ratios.
+log_rats<-compositions::ilr(rna_base)
+# These are complicated to interpret however because you move from D simplex to D-1 euclidean
+# But using these we can see we are now in invertible covariance regime
+new_covdet<-det(log_rats%*%t(log_rats))
+new_covdet
+new_pca<-rda(log_rats)
+# Look at this
+plot(1:length(new_pca$CA$eig),new_pca$CA$eig,main='Skree Plot',ylab='Eigenvalue',xlab='Axis')
+cca_rna<-cca(rna_base, scaling=TRUE)
+```
+## Other Ordination Methods
+We can also do NMDS, but let's first
+(1) explain what NMDS is/does
+(2) explain what a distance actually is w/triangle inequality
+(3) talk about choice of distance metric
+(4) Explain horseshoe effect 
+```{r Implementing NMDS}
+## Start by selecting your favorite distance metric, then you can either calculate it using observed values or statistically estimate it using a package like DivNet (from Willis and Martin 2018) which supports euclidean distance and bray-curtis dissimilarity. For NMDS, however, a true metric is required, because the goal of the NMDS optimization problem is to conserve pairwise distances, and BC dissimilarity does not maintain the triangle inequality, so pairwise distances are not necessarily mutually informative. Therefore, we will estimate euclidean distance using original # of read counts per DivNet's instructions
+# this will take forever unless we tax_glom so that'll be a little work on my part
+#rna_phylo<-phyloseq::phyloseq(otu_table(rna_counts,taxa_are_rows=FALSE),
+#                              sample_data(data.frame(time_of_day=gsub('^.*_','',rownames(rna_counts)),
+#                                                     row.names=rownames(rna_counts))))
+#distances<-divnet(rna_phylo,ncores=4,X="time_of_day")
+
+easy_distances<-dist(rna_base,method='euclidean')
+nmds_output<-metaMDS(easy_distances,k=2,autotransform=FALSE)
+# Take a look at stress - overall this value is not extremely informative, but know that the
+# closer stress is to 1 the less representative of your actual data the NMDS is
+nmds_output$stress # This stress is low so the NMDS is doing a good job
+# Additionally, the axes for NMDS are totally arbitrary, so axis scaling does not matter
+# and data can be rotated/reflected about axes and the NMDS is still the same
+output_frame<-data.frame(nmds_output$points,
+                         time_of_day=gsub('^.*_','',rownames(rna_base)))
+ggplot(output_frame,aes(x=MDS1,y=MDS2,col=time_of_day))+
+         geom_point(size=2)
+``` 
+## Clustering Sequences Based on Temporal Dynamics
+(1) Explain the problem
+(2) Talk about how to do it
+(3) Discuss clustering methods (HC, k-med, SOMs, others???)
+(3b) Take home - the algorithm isn't that super important usually, but rather look at the metrics and see which ones look good
+```{r Implementing Clustering}
+## We want to start by maximally shaving down to temporal dynamics.
+## The end result we want has a few characteristics: (1) the data for different biological units are intercomparable (ie, the means are similar) (2) we are protected from overinterpreting linear trends across our time series which may be due to autocorrelation (this is particularly important for attempting to analyze periodicity, where linear trends may be inconsistent)
+## Here's how we're gonna get there: First, we're going to use the count data. This seems counterintuitive because we already said we want biological units to be intercomparable. The reason we use the counts is because often microbiome data is overdispersed, meaning that the variance of sequences with high counts and sequences with low counts between samples is not the same. If we want common sequences and rare sequences to be intercomparable, we therefore must account for this. A standard transformation is implemented in DESeq2 in R, though other variance-stabilizing transformation tools are also available. 
+# First get distribution of how often each OTU occurs
+n_counts<-colSums(rna_counts)
+hist(log10(n_counts))
+# This is histogram is diagnostic of zero-inflated data, a bunch of these sequences appear 0 times.
+# Before we move on, because those sequences have very uninteresting temporal dynamics (at least not that we can observe), we will remove those.
+rna_no_zero_seqs<-rna_counts[,-which(n_counts==0)]
+# We can back and forth on this -- I like doing the VSN as opposed to going straight to CLR on relative abundances because we can tackle heteroskedasticity in the data more head-on, but also we can demonstrate before we do this whether that's something to worry about or not by like, plotting within-otu SD before against within-otu mean
+within_seq_means<-apply(rna_no_zero_seqs,2,mean)
+within_seq_vars<-apply(rna_no_zero_seqs,2,var)
+plot(within_seq_means,within_seq_vars,log='xy')
+# See how now most of the variances are the same between otus? This means the data are more intercomparable using a z-score transformation. The model also clearly could've done better because of the bulge in the middle but shrug not too bad order <10x difference between most and least variable samples.
+# Okay yeah so this shows that the sequence count variance is exponentially correlated
+# with the variance in read counts between samples, so this must be taken into account for future
+# statistical modeling -- including estimation of standard deviations for z-score transformations
+# so we implement a transformation to stabilize the variance
+transformed_counts<-DESeq2::varianceStabilizingTransformation(t(rna_no_zero_seqs))
+within_trans_means<-apply(transformed_counts,1,mean)
+within_trans_vars<-apply(transformed_counts,1,var)
+plot(within_trans_means,within_trans_vars)
+apply(transformed_counts,2,function(x) length(which(x<0)))
+## Whatever we may make some additional choices but plugging ahead
+# Now we remove linear trends from the time series to discourage distances being functions
+# of anything other than temporal form
+transformed_detrended<-apply(transformed_counts,1,pracma::detrend)
+# Now we rescale so numbers are again intercomparable and now overdispersion has been
+# dealt with (depending on how fancy you want to get and if you have any good theoretical statistics friends variance can be more completely modeled instead of normalized out and then you can do more stuff about hypothesis tests + include better error bars, but for the purpose of exploratory statistics this'll do as far as authors are concerned)
+trans_dt_scaled<-apply(transformed_detrended,2,scale)
+## We lost rownames so tack those back on
+rownames(trans_dt_scaled)<-colnames(transformed_counts)
+# Now we're ready to generate a distance matrix for clustering
+# Which begs the question? What distance to use? Because these are z-score transformed, we
+# have the luxury of using a magnitude-sensitive distance metric like euclidean distance
+# Specifically for time series as well, the short time series distance has been developed which also includes a time step size regularization to account for uneven sampling, but for regular sampling intervals throughout the entire time series is similar to euclidean distance. We'll demonstrate euclidean distance, but recommend reading up on distance metrics because the best metrics will vary by experimental design!
+temporal_dmat<-dist(t(trans_dt_scaled))
+# No we have the pairwise time-series distances between each sequence unit. Now we can try some different cluster methods and see what happens.
+# Because we are doing hard clustering, we must tell the computer how many clusters we want for these methods. This sounds not very robust, but we'll show how you can find a parsimonious clustering by comparing multiple clusterings at different # clusters
+n_clusts<-2:10 # Trying for a variety of cluster numbers
+## (Fun side note: this author has not done this analysis on these data before, so we will learn together!) 
+# Let's try 2 common clustering methods and a couple hipper ones
+# First, the classic hierarchical clustering
+hc_full_cluster<-hclust(temporal_dmat)
+# This method is a little different from other clustering methods because it is "complete", in that it continues to cluster by dividing the data into halves with the least inter-half similarity until you go all the way back to all sequences being their own cluster. Therefore, we run the full algorithm, then extract the clusterings for n # clusters to analyze and validate
+hc_clusts<-lapply(n_clusts,function(x) cutree(hc_full_cluster,x))
+## Now we try k-medoids, also a very popular clustering method. This particular lapply implementation is not optimized for speed, so this may take a minute or so
+kmed_clusts<-lapply(n_clusts, function(x) cluster::pam(temporal_dmat,k=x))
+## We can also try some fun ones but we'll save those for now
+```
+## Which Clusters Should I Use?
+(2) Explain clustering validation metrics
+- Can drop hopkin's statistic - first, clustering algorithms are a double edged sword. They can cluster anything, but that means they can clustering ANYTHING, so it's possible to do this entire exercise on data that do not have significant distance structure -- hopkin's statistic helps decide whether the pairwise distances in the data can be explained by a uniform distribution. 
+- Discuss error and 'elbowing out'
+- C-H Statistic
+```{r Cluster Validation Indices}
+## First we calculate hopkin's statistic before proceeding (note: the limitation of this index on null distance distributions makes it kind of a weak argument, but it is nice just to check)
+# Not running this for now because it's s l o w
+#h_index<-clustertend::hopkins(t(trans_dt_scaled),n=100) # The n here is because the null d'n for the hopkins statistic is determined empirically by subsampled permutations of the distance matrix, the larger n the more likely the hopkins statistic is to converge
+
+## Aggregating everything we're going to want
+hc_stats<-lapply(hc_clusts,function(x) fpc::cluster.stats(temporal_dmat,
+                                                          clustering=x))
+kmed_stats<-lapply(kmed_clusts, function(x) fpc::cluster.stats(temporal_dmat,
+                                                             clustering=x$clustering))
+
+## Now we want to actually compare clusterings, we can do this with several indices
+## First and possibly most familar, error. 
+## We write a helper function to be less redundant
+ripping_stats<-function(list,func){
+  ## Essentially all this function does is implements a function (func) on a list
+  ## and coerces the output to a column vector (this will be handy when we want to make a data frame)
+  output<-do.call(rbind,lapply(list,func))
+  return(output)
+}
+func_list<-rep(list(function(x) x$cluster.number,
+                function(x) x$within.cluster.ss,
+                function(x) x$avg.silwidth,
+                function(x) x$ch),2)
+stats_list<-rep(list(hc_stats,kmed_stats),each=4)
+collected_stats<-purrr::map2(stats_list,func_list,ripping_stats)
+nclusts<-rep(n_clusts,length(collected_stats))
+method<-rep(c('hc','kmed'),each=length(n_clusts)*length(collected_stats)/2)
+ind_name<-rep(c('n','ss','sil','ch'),each=length(n_clusts)) %>%
+  rep(2)
+index_frame<-data.frame(index=do.call(rbind,collected_stats),
+                        nc=nclusts,
+                        method=method,
+                        ind=ind_name)
+index_frame %>%
+  filter(ind=='ss') %>%
+  ggplot(aes(x=nc,y=index,col=method)) +
+  geom_point() +
+  geom_line(aes(group=method)) +
+  ylab('Within Cluster Sum Square Error') +
+  xlab('Number Clusters')
+
+index_frame %>%
+  filter(ind=='ch') %>%
+  ggplot(aes(x=nc,y=index,col=method)) +
+  geom_point() +
+  geom_line(aes(group=method)) +
+  ylab('C-H Stat') +
+  xlab('Number Clusters')
+```

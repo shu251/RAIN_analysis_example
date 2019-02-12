@@ -1,0 +1,7 @@
+"0","plot(obs_set_x,obs_set_y,xlab='X',ylab='Y',main='Quadratic Fit')+
+for(i in 1:nrow(possible_quadratics)){
+  lines(line_plotting_data,possible_quadratics[i,])
+}
+"
+"1","integer(0)
+"

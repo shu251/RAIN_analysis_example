@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1547496504962.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "FFD6D516",
+    "lastKnownWriteTime" : 1547503533,
+    "last_content_update" : 1547503533968,
+    "path" : "~/repos/times_series_methods_scripts/Amplicon_timeseries-analysis_clustering.R",
+    "project_path" : "Amplicon_timeseries-analysis_clustering.R",
+    "properties" : {
+        "cursorPosition" : "8,68",
+        "scrollLine" : "0"
+    },
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

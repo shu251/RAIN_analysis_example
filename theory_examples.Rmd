@@ -1,0 +1,125 @@
+---
+title: "Theory Examples for Analysis of Microbiome Time Series"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Autocorrelation -- Illustrative Examples
+Reminder from text about what autocorrelation is. Here we will show (1) autocorrelation within observations of one random walk; (2) the difference between two autocorrelated time series and their differences; (3) spurious correlation of random independent time series
+
+```{r autocorrelation}
+library(tidyverse)
+## First step is to generate a random walk
+nsteps<-1000 # Set number of steps in random walk
+set.seed(75197) # Initializing a random seed so results are reproducible
+random_walk<-cumsum(rnorm(nsteps)) # Moving randomly on a 1D axis at each step according to SN
+#???
+random_walk2<-cumsum(rnorm(nsteps))
+#???
+inter_step_diffs<-random_walk-dplyr::lag(random_walk,1)
+inter_step_diffs[1]<-0
+previous_t<-dplyr::lag(random_walk,1)
+autocorrelation_plot_frame<-data.frame(t=1:nsteps,
+                                       walk=random_walk,
+                                       diffs=inter_step_diffs,
+                                       prev_step=previous_t)
+autocorrelation_theme<-theme(panel.background=element_blank(),
+                             text=element_text(size=18))
+linear_model<-lm(data=autocorrelation_plot_frame,
+                 walk~prev_step)
+summary(linear_model)
+# Rename from residual
+residual_model<-lm(data=autocorrelation_plot_frame,
+                   diffs~t)
+summary(residual_model)
+ggplot(autocorrelation_plot_frame,aes(x=t,y=walk))+
+  geom_point()+
+  autocorrelation_theme+
+  xlab('t')+
+  ylab('X(t)')+
+  ggtitle('Random Walk')
+ggplot(autocorrelation_plot_frame,aes(x=prev_step,y=walk))+
+  geom_point()+
+  autocorrelation_theme+
+  xlab('X(t-1)')+
+  ylab('X(t)')+
+  ggtitle('Autocorrelation of Random Walk (R^2=97.6%)')
+ggplot(autocorrelation_plot_frame,aes(x=t,y=diffs))+
+  geom_point()+
+  autocorrelation_theme+
+  ylab('X(t)-X(t-1)')+
+  xlab('t')+
+  ggtitle('Residuals of Random Walk (R^2~0)')
+
+## Now it seems intuitive we wouldn't attempt to compare a time series with itself as a means of assessing correlation. However, this principle holds for all independent random walks, though to a smaller degree. Consider this
+set.seed(89134)
+random_walks<-apply(matrix(data=rnorm(8*100),ncol=8),2,cumsum)
+## These are all random and independently generated walks
+random_corrs<-cor(random_walks)
+## We calculate their correlations and plot them against each other
+pairs(random_walks,random_walks,main='Plotting Random Walks')
+corrplot::corrplot(random_corrs,title='Correlations of Independent Random Walks')
+## While not every single walk is super correlated, this sample of 8 already shows a handful of very strong correlations! 
+## Meanwhile if we did the differences
+step_diffs<-apply(random_walks,2,function(x) x-dplyr::lag(x,1))[-1,]
+pairs(step_diffs,step_diffs,main='Time Differences')
+dif_cors<-cor(step_diffs)
+corrplot::corrplot(dif_cors,title='Correlations of Time Differences for Same Walks')
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r determination}
+# Make formula for "true curve"
+# Say y=0.5x^2+2x-1 sure
+x_coords<-1:4
+y_coords<-(x_coords^2)/2+2*(x_coords)-1
+# Now say we were to try to fit a linear model to these data.
+#  A linear model in this case will be defined as:
+# y=mx+b
+# X and Y are our data, so there are two parameters to estimate. If we have 2 points, we can estimate both of them
+obs_set_x<-x_coords[1:2]
+obs_set_y<-y_coords[1:2]
+m_estimate<-(y_coords[2]-y_coords[1])/(x_coords[2]-x_coords[1])
+b_estimate<-y_coords[1]-m_estimate*x_coords[1]
+plot(obs_set_x,obs_set_y,
+     xlab='X',ylab='Y',main='Linear Fit')+
+lines(obs_set_x,obs_set_x*m_estimate+b_estimate)
+# We also could estimate different values of m and b, but we can quantify the error
+# for each of those estimates given the observed data and this estimate will
+# always have the lowest (error=0). Now, let's say we suspected our data 
+# actually have a quadratic relationship, and we wanted to estimate that with only these
+# two points. We could perhaps say:
+# Our model has 3 parameters
+# y=ax^2+bx+c
+# We could fit our data using the same approach as the linear model:
+# y2-y1=a(x2^2-x1^2)+b(x2-x1)
+# Then we get:
+lhs<-obs_set_y[2]-obs_set_y[1]
+rhs_a<-obs_set_x[2]^2-obs_set_x[1]^2
+rhs_b<-obs_set_x[2]-obs_set_x[1]
+# Now we have
+# lhs=a*rhs_a+b*rhs_b OR
+# a*((rhs_a)-lhs)/rhs_b=-b
+# Which means we can calculate an a for any b that will intersect both of these points
+# Example
+a<-seq(0.1,2,by=0.25)
+b<--1*(rhs_a*a)+lhs
+# And for c we just need to plug in one of the observed points
+c<-obs_set_y[1]-a*obs_set_x[1]^2-b*obs_set_x[1]
+line_plotting_data<-seq(obs_set_x[1],obs_set_x[2],by=0.01)
+possible_quadratics<-sapply(line_plotting_data,function(x) (a*x^2)+(b*x)+c)
+plot(obs_set_x,obs_set_y,xlab='X',ylab='Y',main='Quadratic Fit')+
+for(i in 1:nrow(possible_quadratics)){
+  lines(line_plotting_data,possible_quadratics[i,])
+}
+# All of these parameter estimations have error=0, so how do we know which one is right?
+# This is the problem of undetermined model fitting. 
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
