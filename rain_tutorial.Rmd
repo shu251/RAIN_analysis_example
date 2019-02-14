@@ -16,6 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(compositions)
 library(pracma)
 library(rain)
+library(tidyverse)
 
 # Import test data (derived from OTU table)
 load("test_RAIN_df.RData",verbose=T)
@@ -27,16 +28,76 @@ row.names(in_df)<-in_df$OTU.ID; in_df[1]<-NULL # Set OTU.IDs as row names
 
 ```{r Procedure}
 # Centered log-ratio transformation. This is necessary due to the compositional nature of OTU results (see Gloor et al. 2017).
+# More specifically, we want to do this because OTU/ASV tables are count data, meaning they can only be values between 0,inf. This is problematic for any statistical method that assumes equal variance, normally distributed data, or data with iid errors. The CLR moves the data from being between 0,inf to -inf,inf, similar to how log transforms do.
 # ?clr()
 df_clr<-as.data.frame(clr(in_df))
+# See the difference between the raw counts
+raw_counts<-hist(do.call('c',in_df),plot=F,breaks=500)
+# Log-scaling the frequencies for easier graph viewing
+raw_counts$counts<-log10(raw_counts$counts+1)
+# Showing the frequency d'n
+plot(raw_counts,
+     xlab='Number of Counts',
+     main='Count Data',
+     ylab='Log10 Frequency')
+# Doing the same for the transformed data
+clr_hist_data<-hist(do.call('c',df_clr),plot=F,breaks=500)
+clr_hist_data$counts<-log10(clr_hist_data$counts+1)
+plot(clr_hist_data,
+     xlab='CLR Transformed Value',
+     main='CLR Transformation',
+     ylab='Log10 Frequency')
 
 # Detrend
 # ?detrend()
+# We detrend to remove possible linear dependencies in the time-series due to factors such as autocorrelation (example, a weekly trend). Detrending is just subtracting the linear regression of the time-series from the data. 
 df_detr<-detrend(t(df_clr))
 
 # RAIN analysis
 # ?rain()
-# Set up RAIN parameters. This analysis will treat each time point independently (rather than each 'day' as a replicate)
+# Set up RAIN parameters. Before implementing RAIN analysis, let's demonstrate the difference between the 'longitudinal' and 'independent' modes. The 'longitudinal' mode will not aggregate data taken at the same time of day and instead conduct a hypothesis test between each individual timepoint. The 'independent' mode will treat periods as independent, which results in conducting fewer tests with more replicates in each test group (for example, grouping the 4pm samples from days 1, 2, and 3 together and testing whether or not they are greater or less than the 6pm samples from days 1,2,3, instead of testing whether the 4pm sample from day 1 is greater than the 6 pm sample from day one, etc)
+## Create some random time series data (SHOULD BE INSIGNIFICANT)
+set.seed(398585)
+random_time_series<-matrix(rnorm(1200),ncol=12)
+## Now let's create some harmonic data with ~10% noise (SHOULD BE SIGNIFICANT)
+set.seed(88973159)
+timepoints<-1:12
+harmonic_matrix<-t(matrix(rep(sin(timepoints*(pi/2)),100),nrow=12))
+harmonic_matrix<-harmonic_matrix+rnorm(1200,sd=0.1)
+## Now let's create some linearly increasing data with comparable noise (SHOULD BE INSIGNIFICANT)
+set.seed(7341)
+linear_time_series<-(1:12)/6 #making slope approx ~10-20% of magnitude
+linear_matrix<-t(matrix(rep(linear_time_series,100),nrow=12))+rnorm(1200,sd=0.1)
+## Finally, let's create some periodic data with a linear trend over the time series (SHOULD BE SIGNIFICANT)
+set.seed(143164)
+trend_and_noise_periodic<-t(matrix(rep(sin(timepoints*(pi/2))+linear_time_series/2,100),
+                                   nrow=12))+rnorm(1200,sd=0.1)
+## Demonstrating what detrending the trendy data makes it look like (SHOULD BE SIGNIFICANT)
+dt_periodic<-t(detrend(t(trend_and_noise_periodic)))
+## Now we say we expect a 24 hour period and we took measurements every 6 hrs for 3 days
+all_synthetic_data<-rbind(random_time_series,
+                          harmonic_matrix,
+                          linear_matrix,
+                          trend_and_noise_periodic,
+                          dt_periodic)
+rain_longitudinal<-rain(t(all_synthetic_data),period=24,deltat=6,method='longitudinal')
+rain_indpendent<-rain(t(all_synthetic_data),period=24,deltat=6,method='independent')
+## For visualization of differences make some labels
+sample_type<-rep(c('random','harmonic','linear','trend_harmonic','detrended'),
+                 each=100)
+true_answer<-rep(c('no','periodic','no','periodic','periodic'),each=100)
+rain_theory_frame<-data.frame(cbind(sample_type,true_answer),
+                              long_mode=rain_longitudinal$pVal,
+                              ind_mode=rain_indpendent$pVal)
+ggplot(rain_theory_frame,aes(x=log10(ind_mode),y=log10(long_mode)))+
+  geom_point(aes(col=sample_type,shape=true_answer))+
+  ylab('Log10 p-value Longitudinal')+
+  xlab('Log10 p-value Independent')+
+  geom_abline(slope=1,intercept=0)
+## Here we see the difference between the two modes. The solid line is the 1:1 line, which represents both methods having the same p-value result. Anything below this line was deemed lower p-value by longitudinal mode, anything above this line was deemed lower p-value by independent mode.
+```
+
+```{r Rain On Real Data}
 t<-(1:19)
 ft <- c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
 # Run RAIN
